@@ -684,18 +684,16 @@ def main():
         out_rows = []
         for row in results:
             res = row["result"]
-            if res is None:
-                out_rows.append({"target": row["target"], "status": "not_exploited"})
-                continue
-            rec = {"target": row["target"], "status": "rce" if getattr(res, "shell_url", None) else "partial",
-                   "username": getattr(res.admin, "username", None),
-                   "password": getattr(res.admin, "password", None),
-                   "shell": getattr(res, "shell_url", None)}
-            out_rows.append(rec)
+            if res is None or not getattr(res, "shell_url", None):
+                continue  # results.json keeps only successfully exploited targets
+            out_rows.append({"target": row["target"], "status": "rce",
+                             "username": getattr(res.admin, "username", None),
+                             "password": getattr(res.admin, "password", None),
+                             "shell": getattr(res, "shell_url", None)})
         if args.out:
             with open(args.out, "w", encoding="utf-8") as f:
                 json.dump(out_rows, f, indent=2)
-            log(fg, "[+] results written to %s" % args.out, rs)
+            log(fg, "[+] %d exploited target(s) written to %s" % (len(out_rows), args.out), rs)
         return
     if not args.target:
         ap.error("either --target or --list is required")
