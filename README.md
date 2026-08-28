@@ -122,6 +122,60 @@ The patched core (6.9.5+) answers the route-confusion probe with
 `rest_term_invalid` instead of `block_cannot_read`, so the tool exits with
 `NOT vulnerable` — the detection is deterministic and non-destructive.
 
+## Target discovery (dorks)
+
+Google / Bing:
+
+```
+"WordPress 6.9.4" inurl:wp-login.php
+"name=generator" "WordPress 6.9.4"
+"WordPress 6.9.3" OR "WordPress 6.9.4" -"6.9.5"
+"WordPress 7.0.1" inurl:wp-content
+```
+
+Shodan:
+
+```
+http.html:"WordPress 6.9.4"
+http.title:"Just another WordPress site" http.html:"ver=6.9.4"
+```
+
+PublicWWW (one per version; the `?ver=` / `wordpress.org/?v=` variants catch
+sites that strip the generator meta tag):
+
+```
+content="WordPress 6.9.0"
+content="WordPress 6.9.1"
+content="WordPress 6.9.2"
+content="WordPress 6.9.3"
+content="WordPress 6.9.4"
+content="WordPress 7.0.0"
+content="WordPress 7.0.1"
+
+content='WordPress 6.9.4'
+content='WordPress 7.0.1'
+
+?ver=6.9.4
+ver=6.9.3
+ver=7.0.1
+wp-includes/css/dist/block-library/style.min.css?ver=6.9.4
+
+wordpress.org/?v=6.9.4
+wordpress.org/?v=7.0.1
+```
+
+Workflow: collect URLs → strip to base domains → dedupe → verify
+non-destructively:
+
+```bash
+python script.py --check-only --list domains.txt
+```
+
+The version in a dork is only a hint — the `--check-only` probe is the ground
+truth (WAFs, security plugins and hardened loopbacks can kill the chain on a
+vulnerable version, and 6.8.x has the SQLi but not the route confusion).
+Only run the full chain against targets you own or are authorized to test.
+
 ## Lab reproduction
 
 ```bash
