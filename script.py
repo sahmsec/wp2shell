@@ -491,7 +491,11 @@ def exploit(target, command=None):
         target = "http://" + target
 
     log(fc, "[*] Target:", target, rs)
-    r0 = requests.get(target, timeout=15, verify=False)
+    try:
+        r0 = requests.get(target, timeout=TIMEOUT, verify=False)
+    except Exception as e:
+        log(fr, "[-] unreachable: %s" % e, rs)
+        return None
     if r0.status_code != 200:
         log(fr, "[-] site not reachable (HTTP %s)" % r0.status_code, rs)
         return None
@@ -668,7 +672,11 @@ def main():
         return
     if not args.target:
         ap.error("either --target or --list is required")
-    res = exploit(args.target, args.command)
+    try:
+        res = exploit(args.target, args.command)
+    except Exception as e:
+        log(fr, "[-] %s -> error: %s" % (args.target, e), rs)
+        res = None
     if res is not None and args.out:
         with open(args.out, "a", encoding="utf-8") as f:
             f.write(json.dumps({"target": args.target,
